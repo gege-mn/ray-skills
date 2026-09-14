@@ -1,68 +1,172 @@
 # ray-skills
 
-Reusable Claude Code **skills** for integrating projects with [Ray](https://ray-api.gege.mn),
-our notification/email platform. Drop a skill into any project and Claude can send through Ray
-or migrate existing templates into it — using the live API docs as the source of truth.
+Agent skills and a Claude Code plugin for **[Ray](https://ray.gege.mn)**, the notification delivery
+API. (Ray the notification API is not related to the Ray distributed computing framework.)
 
-## Skills
+Ray sends transactional notifications over **email (Amazon SES or SMTP), mobile push (Firebase Cloud
+Messaging), Slack, Discord, Telegram and your own HTTPS webhook**. It uses one REST endpoint
+(`POST /send`) and your own provider credentials, and handles templates, idempotency, fan-out,
+scheduling, retries, suppression, signed delivery webhooks, an in-app feed and click tracking.
 
-| Skill | Use it for |
+With these skills, a coding agent (Claude Code, Cursor, Codex, and others) can wire Ray into your
+app, send and debug notifications, migrate templates from another provider, and design on-brand
+email templates.
+
+## What's in the repo
+
+| Path | What it is |
 |---|---|
-| `ray-integration` | Sending notifications/emails via Ray, and creating/migrating email templates into Ray. |
-| `ray-email-design` | Designing consistent, on-brand email templates (one frozen HTML shell, reused) and saving them to Ray. |
+| `skills/ray-integration/` | Sending through Ray: MCP tools, the `@gege-mn/ray` SDK or raw HTTP. Covers idempotency, fan-out and multi-channel sends, feeds, delivery status, webhook verification, templates, and migrating templates and send calls from Resend, SendGrid, Postmark, Mailgun, SES, Novu, Knock, Courier, OneSignal. |
+| `skills/ray-email-design/` | Consistent, bulletproof HTML email templates: one frozen brand shell, local preview, real-inbox check, then save and publish to Ray. |
+| `.claude-plugin/marketplace.json` | Claude Code plugin marketplace `ray-skills` with one plugin, `ray`. |
+| `.claude-plugin/plugin.json` | The `ray` plugin: both skills. |
+
+```
+skills/ray-integration/
+  SKILL.md                      # entry point: pick MCP / SDK / HTTP, send, key rules
+  references/api.md             # condensed endpoint, channel, content and error contract
+  references/mcp-and-sdk.md     # MCP client setup, tool/SDK/REST map, SDK and HTTP examples
+  references/migrate-templates.md  # template and send-call migration playbook
+skills/ray-email-design/
+  SKILL.md                      # brand setup, generate, verify, publish
+  references/email-html-rules.md   # bulletproof email-HTML standard + frozen shell
+  references/save-to-ray.md        # template upsert, preview send, test-send, publish
+```
 
 ## Install
 
-**Quick install** — with the [`skills`](https://github.com/vercel-labs/skills) CLI:
+### Any agent: `skills` CLI
+
 ```bash
-pnpx skills add sadespresso/ray-skills          # detects + installs ray-integration
-pnpx skills add sadespresso/ray-skills -g       # -g installs it globally (all projects)
+npx skills add gege-mn/ray-skills            # pick skills and agents interactively
+npx skills add gege-mn/ray-skills -g         # install for your user (all projects)
+npx skills add gege-mn/ray-skills --skill ray-integration   # just one skill
 ```
 
-A skill is just a directory containing `SKILL.md`, so you can also wire it up by hand. Pick one:
+### Claude Code: plugin marketplace
 
-**Per project** — make it available in one repo:
+Inside Claude Code:
+
+```text
+/plugin marketplace add gege-mn/ray-skills
+/plugin install ray@ray-skills
+```
+
+This installs both skills (as `/ray:ray-integration` and `/ray:ray-email-design`). It doesn't
+register the MCP server, so a missing API key never leaves a broken server behind; add it with the
+one-line command in [MCP server](#mcp-server) below. Update with
+`/plugin marketplace update ray-skills`.
+
+### Manual
+
+A skill is a directory containing `SKILL.md`. Clone the repo and copy or symlink the skill folders
+into your agent's skills directory:
+
 ```bash
-ln -s ~/Projects/ray-skills/skills/ray-integration \
-      /path/to/your-project/.claude/skills/ray-integration
-# (or copy instead of symlink)
+git clone https://github.com/gege-mn/ray-skills ~/src/ray-skills
+
+# Claude Code, all projects
+ln -s ~/src/ray-skills/skills/ray-integration  ~/.claude/skills/ray-integration
+ln -s ~/src/ray-skills/skills/ray-email-design ~/.claude/skills/ray-email-design
+
+# Claude Code, one project
+mkdir -p .claude/skills && cp -R ~/src/ray-skills/skills/ray-integration .claude/skills/
 ```
 
-**All projects** — make it available everywhere:
+## Set up access
+
+1. Create an API key at https://ray.gege.mn under **API keys**. Keep the `write` scope if the agent
+   should send or edit templates. Configure at least one channel under **Channels**, because
+   provider credentials can't be created through the API.
+2. Put the key in your environment, never in code:
+
 ```bash
-ln -s ~/Projects/ray-skills/skills/ray-integration \
-      ~/.claude/skills/ray-integration
+export RAY_API_KEY="ck_live_..."
 ```
 
-Then, in a project, just ask Claude things like *"migrate our email templates to Ray"* or
-*"send a welcome email through Ray"* — the skill activates from its `description`.
+## MCP server
 
-## Prerequisite
+Hosted endpoint: `https://ray-api.gege.mn/mcp` (Streamable HTTP, same API key as the REST API).
+It exposes `whoami`, `get_usage`, `list_channels`, `send_notification`, `get_send_status`,
+template tools (`list_templates`, `get_template`, `create_template`, `update_template_draft`,
+`publish_template`, `archive_template`, `unarchive_template`, `test_send_template`),
+`list_feed_notifications`, `get_click_stats`, webhook tools (`list_webhooks`, `get_webhook`,
+`create_webhook`, `update_webhook`, `delete_webhook`) and `read_docs`.
 
-Set a Ray API key in the environment before using it (the skill never hardcodes it):
+Claude Code:
+
 ```bash
-export RAY_API_KEY=…   # from Ray dashboard → workspace → API keys (write scope to manage templates)
+claude mcp add --transport http ray https://ray-api.gege.mn/mcp --header "Authorization: Bearer $RAY_API_KEY"
 ```
 
-## How it works
+Cursor (`.cursor/mcp.json`):
 
-- `SKILL.md` is the lean entry point Claude loads; details live in `references/`.
-- The authoritative API contract is always the live spec at
-  `https://ray-api.gege.mn/openapi.json` — the skill tells Claude to fetch it rather than
-  rely on anything baked in, so it can't go stale.
-
-## Layout
-```
-skills/ray-integration/
-  SKILL.md                      # entry point (name + description + overview)
-  references/
-    api.md                      # condensed endpoint/auth/contract reference
-    migrate-templates.md         # step-by-step template migration playbook
-skills/ray-email-design/
-  SKILL.md                      # entry point: brand setup → generate → verify → publish
-  references/
-    email-html-rules.md         # bulletproof email-HTML standard + frozen-shell anatomy
-    save-to-ray.md              # slim template write/upsert/test-send/publish contract
+```json
+{ "mcpServers": { "ray": { "url": "https://ray-api.gege.mn/mcp", "headers": { "Authorization": "Bearer ck_live_..." } } } }
 ```
 
-Add more skills under `skills/<name>/SKILL.md` as Ray grows.
+VS Code (`.vscode/mcp.json`):
+
+```json
+{ "servers": { "ray": { "type": "http", "url": "https://ray-api.gege.mn/mcp", "headers": { "Authorization": "Bearer ck_live_..." } } } }
+```
+
+Windsurf (`~/.codeium/windsurf/mcp_config.json`):
+
+```json
+{ "mcpServers": { "ray": { "serverUrl": "https://ray-api.gege.mn/mcp", "headers": { "Authorization": "Bearer ck_live_..." } } } }
+```
+
+Local stdio bridge (any MCP client):
+
+```json
+{ "mcpServers": { "ray": { "command": "npx", "args": ["-y", "@gege-mn/ray-mcp"], "env": { "RAY_API_KEY": "ck_live_..." } } } }
+```
+
+Codex (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.ray]
+command = "npx"
+args = ["-y", "@gege-mn/ray-mcp"]
+env = { RAY_API_KEY = "ck_live_..." }
+```
+
+## SDK
+
+TypeScript/JavaScript: [`@gege-mn/ray`](https://github.com/gege-mn/ray-node) (Node 18+, Bun,
+Deno, edge; zero dependencies).
+
+```ts
+import { Ray } from "@gege-mn/ray";
+
+const ray = new Ray(); // reads RAY_API_KEY
+const { sendId } = await ray.send(
+  { channelConfigId, templateId, params: { name: "Ada" }, recipient: { email: "ada@example.com" } },
+  { idempotencyKey: "welcome-user_123" },
+);
+```
+
+## Example prompts
+
+- "Send a welcome email through Ray when a user signs up, with an idempotency key."
+- "Post deploy notifications to our Slack channel through Ray."
+- "Add push notifications for shipped orders via Ray and FCM, and clean up dead device tokens."
+- "Migrate our SendGrid dynamic templates to Ray and replace the send calls."
+- "Move our Knock workflows to Ray: email, push and in-app feed."
+- "Design a password reset and a receipt email in our brand and save them to Ray as drafts."
+- "Add a Ray delivery webhook endpoint and verify its signature."
+- "Why did send 6a7b8c9d-... fail?" (uses `get_send_status` when the MCP server is connected)
+
+## Docs
+
+- Docs: https://ray.gege.mn/docs. Append `.md` to any page for markdown, e.g.
+  https://ray.gege.mn/docs/sending.md
+- Index for agents: https://ray.gege.mn/llms.txt. Everything in one file:
+  https://ray.gege.mn/llms-full.txt
+- OpenAPI 3.1: https://ray-api.gege.mn/openapi.json. API reference: https://ray-api.gege.mn/docs
+- Using Ray with AI agents: https://ray.gege.mn/docs/ai-agents
+
+## License
+
+[MIT](LICENSE) © gege.mn

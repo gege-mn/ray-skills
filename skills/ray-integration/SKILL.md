@@ -1,169 +1,137 @@
 ---
 name: ray-integration
-description: Integrate a project with Ray, the notification/email platform at https://ray-api.gege.mn. Use when sending notifications or emails through Ray, creating or migrating email/notification templates into Ray, or wiring Ray's HTTP API into an app. Covers auth, GET /channels, POST /send, POST /templates, and the live OpenAPI spec.
+description: Integrates apps with the Ray notification API (ray.gege.mn), which sends transactional email (Amazon SES or SMTP), mobile push (FCM), Slack, Discord, Telegram and HTTPS webhook notifications through one REST API, a hosted MCP server and the @gege-mn/ray TypeScript SDK. Use when a project sends or should send notifications or transactional email through Ray, when adding or debugging send code, idempotent sends, fan-out or multi-channel sends, scheduled sends, in-app notification feeds, delivery status, click tracking or signed delivery webhooks, when creating or publishing Ray templates, or when migrating templates and send calls from Resend, SendGrid, Postmark, Mailgun, SES, Novu, Knock, Courier, OneSignal or Firebase into Ray. Also use when RAY_API_KEY, ray-api.gege.mn or @gege-mn/ray appears in a project. Not for the Ray distributed computing framework (ray.io, Ray Serve, Ray Tune).
 ---
 
 # Ray integration
 
-Ray is a multi-tenant notification platform — email (Amazon SES or raw SMTP), push (FCM),
-Slack, Discord, Telegram, and generic signed webhooks, all behind one HTTP API. This
-project talks to it over HTTP.
+Ray (https://ray.gege.mn) is a multi-tenant notification delivery API. It is not the Ray
+distributed computing framework. Ray relays through the workspace's own provider credentials over
+7 channels: Amazon SES email, SMTP email, FCM push, Slack, Discord, Telegram and generic HTTPS webhook.
 
-- **Base URL:** `https://ray-api.gege.mn`
-- **Authoritative, always-current contract:** `https://ray-api.gege.mn/openapi.json`
-  (OpenAPI 3.1, generated from the server's own schemas — it can't drift). **Fetch it**
-  whenever you need exact request/response shapes. Human UI: `https://ray-api.gege.mn/docs`.
+- REST base URL: `https://ray-api.gege.mn` (no `/v1`). Auth on every request:
+  `Authorization: Bearer $RAY_API_KEY` (`ck_live_...`). Read the key from the environment. Never
+  hardcode it or ship it to browser or mobile code.
+- Scopes: `read` covers every `GET`. `write` covers `POST /send`, template writes and test-sends,
+  and webhook writes. A missing `write` scope returns **400** `validation_error` "write scope
+  required", not 403.
+- Provider credentials (channel configs) are created only in the dashboard. Code discovers them
+  with `GET /channels` and never creates them.
 
-When in doubt about any field, fetch the OpenAPI rather than guessing.
+## Pick the integration path
 
-## Auth
-Every request sends `Authorization: Bearer $RAY_API_KEY` (keys look like `ck_live_…`).
-- `RAY_API_KEY` is a Ray API key (Ray dashboard → workspace → **API keys**). **Read it from
-  the environment; never hardcode it.** Sending needs any key; creating/updating templates
-  needs a **write**-scoped key.
-- One key = one Ray **workspace** (tenant). Each product is normally its own workspace, with
-  its own channel configs, templates, suppression list, and keys.
-- **Preflight:** `GET /me` → `{ tenantId, apiKeyId, scopes }`. Cheap way to confirm the key is
-  valid and (before template work) that `scopes` includes `write` — do this instead of guessing.
+1. **Doing it yourself now** (send a test, create or publish templates, check a send, manage
+   webhooks): use the **Ray MCP server's tools** when they are connected. In Claude Code they
+   appear as `mcp__ray__<tool>`, or `mcp__plugin_ray_ray__<tool>` when installed via the plugin.
+   Tools: `whoami`, `get_usage`, `list_channels`, `send_notification` (takes `idempotencyKey`),
+   `get_send_status`, `list_templates`, `get_template`, `create_template`,
+   `update_template_draft`, `publish_template`, `archive_template`, `unarchive_template`,
+   `test_send_template`, `list_feed_notifications`, `get_click_stats`, `list_webhooks`,
+   `get_webhook`, `create_webhook`, `update_webhook`, `delete_webhook`, `read_docs`.
+   If they are not connected, fall back to `curl` and suggest setup: see
+   `references/mcp-and-sdk.md`. Claude Code:
+   `claude mcp add --transport http ray https://ray-api.gege.mn/mcp --header "Authorization: Bearer $RAY_API_KEY"`
+2. **Writing app code in JS/TS** (Node 18+, Bun, Deno, edge): use the SDK `@gege-mn/ray`.
+3. **Other languages, or the SDK can't be installed**: use plain HTTP (`fetch`, `requests`, ...)
+   with the same JSON bodies.
 
-## Discover channels — `GET /channels`
-Don't hardcode UUIDs or guess recipient shapes — list what the workspace actually has:
+## Workflow
+
+1. **Preflight**: `whoami` / `ray.me()` / `GET /me` returns `{ tenantId, apiKeyId, scopes }`.
+   Confirm `write` is present before sending or editing templates.
+2. **Discover channels**: `list_channels` / `ray.channels.list()` / `GET /channels` returns
+   `{ channels: [{ id, name, kind, templateKind, recipientSchema }] }`. Use `id` as
+   `channelConfigId`. `recipientSchema` (JSON Schema) is authoritative for `recipient`. Don't guess.
+   Don't hardcode ids in code either: put them in env/config.
+3. **Send** with an idempotency key derived from the business event, on every send:
+
+```ts
+import { Ray, RayError } from "@gege-mn/ray";
+
+const ray = new Ray(); // reads process.env.RAY_API_KEY
+
+const { sendId } = await ray.send(
+  {
+    channelConfigId: process.env.RAY_EMAIL_CHANNEL_ID!,
+    templateId: process.env.RAY_ORDER_SHIPPED_TEMPLATE_ID!, // or inline `content`
+    params: { name: user.name, orderId: order.id },
+    recipient: { email: user.email, name: user.name },
+    externalUserId: user.id, // optional: labels rows, keys the in-app feed
+    showInFeed: true,
+  },
+  { idempotencyKey: `order-shipped-${order.id}` },
+);
+// Throws RayError { status, code, message, requestId? } on non-2xx.
 ```
-GET /channels → { channels: [{ id, name, kind, templateKind, recipientSchema }] }
-```
-Use a channel's `id` as `channelConfigId` below; `recipientSchema` is the exact `recipient`
-object that channel expects; pick a `templateId` whose kind matches `templateKind`. Returns
-safe metadata only — never provider credentials.
 
-## Send a notification — `POST /send`
-```
-{
-  "channelConfigId": "<a channel id from GET /channels>",
-  "templateId": "<uuid>",                // template send — XOR `content`
-  "params": { "name": "Ada" },           // fills {{vars}}; arbitrary JSON (see Template params below)
-  "recipient": { "email": "a@b.com" },   // shape depends on the channel (see references/api.md)
-  "externalUserId": "user_123",          // optional; ties the delivery to a feed user
-  "feed": { "title": "…", "description": "…" }  // optional; creates one in-app feed entry
+Raw HTTP fallback: `POST https://ray-api.gege.mn/send` with headers `Authorization`,
+`Content-Type: application/json` and `Idempotency-Key: order-shipped-<orderId>`. Expect **202**
+`{ sendId }`. Anything else: read `{ error, message }` and branch on `status` + `error`, never on
+`message`.
+
+4. **Confirm delivery**: 202 means queued, not delivered. Check `get_send_status` /
+   `ray.sends.get(sendId)` / `GET /sends/{id}` (rows go `pending` to `delivered`, `failed_terminal`
+   or `suppressed`). In production, prefer delivery webhooks.
+
+## Rules that are easy to get wrong
+
+- **Idempotency**: pass an `Idempotency-Key` on every `POST /send`. Build it from the event
+  (`password-reset-<userId>-<tokenId>`), not a fresh UUID per retry. Replays within 24h return the
+  original `sendId`. The same key with a different body returns 409. Only `/send` honors it.
+  Retry only on 429 (wait `Retry-After`), 5xx, network errors, and a 409 "already in progress",
+  always with the same key.
+- **Exactly one content source** per delivery: `templateId` (a *published* template of the
+  channel's kind) or inline `content` (same shape as a template's content).
+- **Exactly one mode**: `channelConfigId` + `recipient` (single), `channelConfigId` +
+  `targets[]` (1-1000, body rendered once with one `params` set, so no per-recipient
+  personalization), `deliveries[]` (1-10 channels for one person, each with its own
+  `channelConfigId`/content/`recipient`; a delivery's `params` *replaces* top-level `params`), or
+  feed-only (`feed.title` + `externalUserId`, no channel).
+- **Ray keeps no recipient registry**: pass the email, FCM `deviceToken`/`topic` or Telegram
+  `chatId` on every send. `externalUserId` only labels rows and keys the feed. It never picks who
+  receives. Slack, Discord and webhook recipients are `{}`.
+- **Bulk/marketing**: `priority: "low"` so transactional mail goes first. For isolated
+  throughput, use a separate provider credential. For personalized campaigns, send one request per
+  recipient with a shared `campaignId`.
+- **Templates**: variables are a Mustache subset (`{{x}}`, `{{a.b}}`, `{{#list}}...{{/list}}`,
+  `{{^x}}`, `{{.}}`). No `{{{raw}}}`, partials or helpers. Param values are escaped per channel
+  (HTML in `bodyHtml` and Telegram; Slack `& < >`; Discord markdown). Email `subject` and
+  `bodyText` are not escaped, and a line break in the rendered subject is a 400. Every top-level
+  variable is a required param. Edits go to a draft. Sends use the published version only.
+- **Delivery webhooks** (Pro plan+): verify `X-Ray-Signature` against the **raw body** before
+  parsing. Use `verifyWebhookSignature` from `@gege-mn/ray`:
+
+```ts
+import { verifyWebhookSignature } from "@gege-mn/ray";
+
+export async function POST(request: Request) {
+  const rawBody = await request.text(); // raw bytes: don't JSON.parse first
+  const ok = await verifyWebhookSignature({
+    payload: rawBody,
+    headers: request.headers, // reads x-ray-signature
+    secret: process.env.RAY_WEBHOOK_SECRET!, // or an array during secret rotation
+  });
+  if (!ok) return new Response("invalid signature", { status: 400 });
+  const event = JSON.parse(rawBody); // notification.delivered | notification.failed_terminal | send.completed
+  // Deduplicate: notification_log_id (notification.*) or send_id (send.completed). Ack fast.
+  return new Response(null, { status: 204 });
 }
 ```
-- **Content source — provide exactly one (per delivery, if using `deliveries[]`):**
-  - `templateId` (+ `params`) — render a published template.
-  - `content` — inline, channel-shaped content (e.g. email `{ subject, bodyHtml, bodyText }`),
-    no template needed. `params` still fill its `{{vars}}`; add optional `logTitle` /
-    `logDescription` for the in-app feed entry. **Raw only** — designed/Maily content stays
-    dashboard-only, same as `POST /templates`.
-- **Delivery — three mutually exclusive modes:**
-  - `recipient` (single) — one channel, one recipient.
-  - `targets: [{ recipient, externalUserId? }, …]` (fan-out, 1–1000, one delivery/feed row
-    each) — the body renders **once** and is reused for every target.
-  - `deliveries: [{ channelConfigId, templateId | content, recipient, params? }, …]`
-    (multi-channel, 1–10) — the *same* logical notification over several channels (push +
-    email + SMS, say) for **one** recipient, identified by a top-level `externalUserId`. All
-    deliveries share one `sendId`; `feed` creates at most one feed entry regardless of how many
-    channels fired. Not cross-producted with `targets[]` — loop over recipients yourself for
-    bulk multi-channel.
-- **Feed-only sends:** omit `deliveries`/`recipient`/`targets` entirely and pass `feed` (its
-  `title` is then required) + `externalUserId` — a pure in-app notification, zero channel
-  dispatches, `send.completed` fires immediately.
-- `showInFeed: true` still works as a legacy alias for `feed` (creates a feed entry using the
-  delivery's rendered `logTitle`/`logDescription`) — prefer `feed` in new integrations.
-- Send an `Idempotency-Key: <uuid>` header so retries don't double-send.
-- `notBefore: "<ISO-8601>"` schedules a future send.
-- `priority: "high" | "low"` (default `"high"`). Mark marketing/bulk sends `"low"` so they
-  yield to transactional mail — see **Bulk & marketing** below.
-- `trackClicks: true` (email only, default `false`) rewrites HTML body links so clicks are
-  counted; pass an optional `campaignId` to group them. Read counts via `GET /clicks` — see
-  **Click tracking** below.
 
-### Multi-channel & feed-only
-```
-{
-  "externalUserId": "u_42",
-  "feed": { "title": "New feature is live!", "description": "Check out dark mode in settings." },
-  "deliveries": [
-    { "channelConfigId": "…push…",  "templateId": "…", "recipient": { "deviceToken": "…" } },
-    { "channelConfigId": "…email…", "templateId": "…", "recipient": { "email": "a@example.com" } }
-  ]
-}
-```
-Drop `deliveries` (keep `feed` + `externalUserId`) for feed-only. Feed entries are **decoupled
-from delivery**: created at accept time (or `notBefore` for scheduled sends), and stay visible
-even if every channel in the send fails or is suppressed — one entry per `(send, externalUserId)`
-no matter how many channels fanned out. Test sends never create one. See `GET /notifications`
-in `references/api.md`.
+  The scheme is `t=<unix>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">`, keyed with the secret string
+  as returned. Reject timestamps older than 5 min. The **generic_webhook channel** is different:
+  `X-Ray-Signature: sha256=<hex>` over `"<X-Ray-Timestamp>.<raw body>"`; verify it with
+  `verifyChannelWebhookSignature` (same options). See
+  `https://ray.gege.mn/docs/channels/webhook.md`.
 
-**Ray is a stateless relay — it keeps no recipient registry.** You pass the channel-shaped
-recipient on every send (an email, an FCM `deviceToken`/`topic`, a Telegram `chatId`, …) and
-own the user → contact-info mapping in *your* system. There is no "register device /
-subscriber" step and no "send to user U" call — same as you'd pass an email address rather
-than pre-registering it. `externalUserId` only labels the delivery for the in-app feed; it
-never decides who actually receives the message. (Migrating from OneSignal/Firebase/Knock,
-which hold the device registry for you? This is the inverted model — supply the token each
-send, or use an FCM `topic` for multi-device fan-out.)
+## Details: fetch, don't guess
 
-### Bulk & marketing
-Ray has no audience/segment/subscriber store — your system owns the contact list, segmentation,
-unsubscribe links, and consent. To send a campaign you build the recipient list yourself and call
-`POST /send`. Two things to get right:
-- **Personalization (`Hello {{name}}`):** a `targets[]` fan-out renders the body **once** and
-  reuses it for everyone — the only per-recipient fields are `recipient` and `externalUserId`, so
-  it can't personalize the body. For per-recipient content, send **one `/send` per recipient**
-  (`recipient` + that person's `params`, or pre-rendered inline `content`). Reserve `targets[]`
-  for identical-body blasts. Either way Ray queues the sends and paces them to the channel's
-  provider rate limit — you don't throttle client-side.
-- **Don't starve transactional mail:** mark every marketing/bulk send `"priority": "low"` so a
-  magic-link or receipt sent mid-campaign jumps ahead instead of waiting behind the blast. For
-  full isolation, send marketing through a **separate channel config** (its own provider
-  credential → its own independent rate bucket, so the blast can't consume the transactional
-  send rate either).
+This skill is a summary. For exact fields, limits and error messages, read the live docs:
+the `read_docs` MCP tool (slug such as `sending`, `templates`, `channels/telegram`), or
+`https://ray.gege.mn/docs/<slug>.md` (index: `https://ray.gege.mn/llms.txt`). The OpenAPI 3.1 spec
+is `https://ray-api.gege.mn/openapi.json`.
 
-### Click tracking
-Set `trackClicks: true` on an email send and Ray rewrites every absolute `<a href="http(s)…">` in
-the HTML body to a signed redirect (`/c/<token>`) that records the click and 302s to the original
-URL — transport-agnostic (SES + SMTP), since the rewrite happens at send time. Opt-in per send.
-- Only the HTML body is rewritten (not plain text); `mailto:`/`tel:`/anchors are left alone, and an
-  `<a data-ray-no-track>` opts a link out (e.g. unsubscribe/legal links).
-- Pass a `campaignId` to aggregate clicks across many sends (e.g. one `/send` per recipient in a
-  campaign), then read **`GET /clicks?campaignId=…`** (or `?sendId=…`) → `{ totalClicks, byUrl: [{ url, clicks }] }`
-  with the same key you send with.
-- Counts include bot/scanner pre-fetches and are total, not unique — a trend signal, not exact.
-
-## Create / migrate templates — `POST /templates`
-For bulk import from an existing system, follow **`references/migrate-templates.md`**.
-Quick shape: `channelKind: "email_html"`, `content: { source:"raw", subject, bodyHtml, bodyText }`,
-plus `logTitle`, `logDescription`, and `publish`. The API is **raw HTML only** — visual /
-"designed" (Maily) templates are dashboard-only. Template variables use the Mustache subset
-below; top-level `{{var}}` interpolations become **required params** at send time.
-- **Verify a render without spamming anyone:** `POST /templates/:id/test-send` delivers to an
-  address you control and is flagged `is_test` (never shows in customer feeds). Prefer it over
-  a real `/send` when checking a migrated template.
-
-### Template params & syntax (Mustache subset)
-Raw-HTML templates render with a **Mustache-subset** engine, and `params` accepts **arbitrary
-JSON** (strings, numbers, booleans, `null`, arrays, nested objects) — not just strings. **Plain
-strings still work unchanged**, so existing flat `{{var}}` templates need no migration.
-- `{{var}}` / `{{a.b}}` / `{{.}}` — escaped scalar interpolation (per-channel escaping, XSS-safe);
-  dotted paths and the current item.
-- `{{#x}}…{{/x}}` — **section**: iterates an array (once per element), renders once for a truthy
-  object/scalar, or nothing when falsy (`false`/`null`/`""`/`[]`/absent).
-- `{{^x}}…{{/x}}` — **inverted section**: renders only when the value is falsy/empty.
-- `required_params` is **section-aware**: only top-level interpolations are required; section names
-  and variables used inside a section are not listed.
-
-Example — a digest with one card per league:
-```
-{{#boards}}<div class="card"><b>{{name}}</b> · {{count}}{{#questions}}<p>{{text}}</p>{{/questions}}</div>{{/boards}}{{^boards}}<p>Nothing pending 🎉</p>{{/boards}}
-```
-```json
-{ "params": { "boards": [ { "name": "Asian League", "count": 1, "questions": [ { "text": "Who tops the group?" } ] } ] } }
-```
-Caveats: unescaped output `{{{x}}}` / `{{& x}}` is **not supported** (treated as literal text — no
-raw HTML from senders); **partials and helper functions are unsupported**; an unbalanced section
-(unclosed/mismatched `{{#x}}…{{/x}}`) is **rejected with 400 at create/publish**; and visual /
-"designed" (Maily) templates stay **flat-vars only** — sections are a raw-HTML capability.
-
-## References
-- `references/api.md` — condensed contract: endpoints, channel kinds, recipient & content
-  shapes, errors, rate limits.
-- `references/migrate-templates.md` — step-by-step migration of existing templates into Ray.
-- Anything else → `https://ray-api.gege.mn/openapi.json`.
+- `references/api.md`: condensed endpoint, channel, content, recipient and error contract.
+- `references/mcp-and-sdk.md`: MCP client setup, the tool, SDK and REST mapping, and fallbacks.
+- `references/migrate-templates.md`: importing templates and send calls from other providers.
+- Designing on-brand email HTML: the `ray-email-design` skill.

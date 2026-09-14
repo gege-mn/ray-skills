@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "ray",
+  "displayName": "Ray notifications",
+  "description": "Send notifications and transactional email with the Ray notification API (ray.gege.mn): integration, template migration and email design skills. Connect the Ray MCP server separately (see the README).",
+  "author": {
+    "name": "gege.mn",
+    "url": "https://github.com/gege-mn"
+  },
+  "homepage": "https://ray.gege.mn/docs/ai-agents",
+  "repository": "https://github.com/gege-mn/ray-skills",
+  "license": "MIT",
+  "keywords": [
+    "ray",
+    "notifications",
+    "transactional-email",
+    "push",
+    "fcm",
+    "slack",
+    "discord",
+    "telegram",
+    "webhooks",
+    "mcp"
+  ]
+}

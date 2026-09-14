@@ -1,0 +1,17 @@
+{
+  "name": "ray-skills",
+  "owner": {
+    "name": "gege.mn",
+    "url": "https://github.com/gege-mn"
+  },
+  "description": "Agent skills for the Ray notification API (ray.gege.mn): email, push, Slack, Discord, Telegram and webhook notifications.",
+  "plugins": [
+    {
+      "name": "ray",
+      "source": "./",
+      "description": "Send notifications and transactional email with the Ray notification API (ray.gege.mn): integration, template migration and email design skills.",
+      "category": "integrations",
+      "tags": ["notifications", "email", "push", "slack", "discord", "telegram", "webhooks", "mcp"]
+    }
+  ]
+}
