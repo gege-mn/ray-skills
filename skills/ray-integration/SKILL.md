@@ -94,9 +94,11 @@ Raw HTTP fallback: `POST https://ray-api.gege.mn/send` with headers `Authorizati
 - **SMS**: `twilio_sms` and `sendsms_mn` share the `sms_text` kind (`{ text }`, plain text, max
   1600, params inserted verbatim). Twilio wants E.164 (`{ phoneNumber: "+97699112233" }`, no
   country code is a 400); sendsms.mn wants 8 Mongolian digits (`"99112233"`, `+976` is stripped).
-  sendsms.mn sends one SMS: the *rendered* text must be ≤159 chars if all GSM-7 (plain Latin), or
-  ≤69 if it has any other character (Cyrillic, emoji), else 400 on `/send` and test-send. Keep
-  Mongolian SMS templates short and params bounded. Ray has no SMS suppression list.
+  sendsms.mn takes one SMS per request, so Ray splits long text itself at spaces/line breaks into
+  parts of ≤159 chars if all GSM-7 (plain Latin), or ≤69 if a part has any other character
+  (Cyrillic, emoji); each part is sent in order, billed as one SMS and arrives as a separate
+  message. No length 400 on sendsms.mn (only Twilio rejects >1600 rendered). Ray has no SMS
+  suppression list.
 - **Bulk/marketing**: `priority: "low"` so transactional mail goes first. For isolated
   throughput, use a separate provider credential. For personalized campaigns, send one request per
   recipient with a shared `campaignId`.

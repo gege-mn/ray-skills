@@ -120,11 +120,11 @@ Workflow products (Novu, Knock, Courier) bundle channels and orchestration. Map 
   inline `content: { text }` or a template. `from` / `messagingServiceSid` live on the channel
   config (dashboard), not the send. Twilio credentials (Account SID, Auth Token) are entered in the
   dashboard, never through the API.
-- sendsms.mn recipients are 8 Mongolian digits (`"99112233"`; `+976` is stripped). It sends one SMS:
-  the **rendered** text must be ≤159 chars if all GSM-7 (plain Latin), ≤69 if it contains any
-  Cyrillic or other non-GSM character, otherwise `/send` and test-send return 400. When moving
-  long Mongolian messages, shorten them, bound param lengths, or keep a separate shorter template
-  for that channel. Flag any source message that can't fit.
+- sendsms.mn recipients are 8 Mongolian digits (`"99112233"`; `+976` is stripped). sendsms.mn takes
+  one SMS per request, so Ray splits long **rendered** text itself at spaces/line breaks into parts
+  of ≤159 chars if all GSM-7 (plain Latin), ≤69 if a part contains any Cyrillic or other non-GSM
+  character. Each part is billed as one SMS and arrives as a separate message, so long Mongolian
+  messages still send (no 400) but cost more; shorten them or make them read well when split.
 - Ray has no SMS suppression list or opt-out registry. Keep STOP/opt-out state in the app (Twilio
   still blocks numbers that replied STOP on its side).
 

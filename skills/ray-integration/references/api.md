@@ -60,10 +60,13 @@ No API key needed: `GET /healthz`, `GET /openapi.json`, `GET /docs` (API referen
   `& < >`. Discord backslash-escapes markdown. Email `subject` (no line breaks allowed), `bodyText`,
   FCM, SMS and webhook fields are not escaped. `logTitle`/`logDescription` are never escaped, so render
   them as text.
-- SMS length is checked **after rendering**, as a 400 from `/send` and test-send. Twilio: ≤1600
-  (billed per ~160 GSM-7 / ~70 UCS-2 segment). sendsms.mn sends exactly one SMS: ≤159 chars if
-  every character is GSM-7 (plain Latin), ≤69 if any is not (Cyrillic, emoji: UCS-2). Keep
-  Mongolian templates short and bound param lengths. A Twilio recipient without a country code is
+- SMS text is up to 1600 chars. Twilio checks it **after rendering** (>1600 is a 400 from `/send`
+  and test-send) and splits it itself (billed per ~160 GSM-7 / ~70 UCS-2 segment). sendsms.mn
+  accepts one SMS per request, so Ray splits long text at spaces/line breaks into parts of ≤159
+  chars if the part is all GSM-7 (plain Latin), ≤69 if it has any other character (Cyrillic,
+  emoji: UCS-2). Each part is its own request, sent in order, billed as one SMS and delivered as a
+  separate message; `providerMessageId` is comma-separated ids, and a split message counts once
+  toward `ratePerMinute`. No length 400 on sendsms.mn. A Twilio recipient without a country code is
   a 400. Credentials (Twilio Account SID + Auth Token + sender number or Messaging Service SID;
   sendsms.mn API key + token) are set in the dashboard only.
 - Only SES populates the suppression list (hard bounces and complaints via SNS). Suppressed rows
@@ -192,5 +195,6 @@ pacing (SES/SMTP 840/min default, Telegram 1500/min, Slack 1/s per webhook, Twil
 
 Provider errors on delivery rows: `providerError.name` is e.g. `TwilioError` or `SendsmsMnError`.
 For SMS, provider 4xx except 429 is `failed_terminal` (bad number, country not enabled, STOP,
-wrong credentials, no sendsms.mn balance); 429 and 5xx are retried. sendsms.mn timeouts are not
-retried, because the SMS may already have been sent.
+wrong credentials, no sendsms.mn balance); 429, 5xx and connection errors are retried. sendsms.mn
+is not retried once an SMS may already be out: timeouts, and any failure after the first part of a
+split message was sent (`sent 1 of 3 SMS parts, then part 2 failed ...`).
