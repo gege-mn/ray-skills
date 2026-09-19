@@ -46,9 +46,11 @@ No API key needed: `GET /healthz`, `GET /openapi.json`, `GET /docs` (API referen
 | `slack_webhook` | `slack_text` | `text` (1-40000, mrkdwn) | `{}` |
 | `discord_webhook` | `discord_text` | `content` (1-2000, Discord markdown; mentions disabled) | `{}` |
 | `telegram_bot` | `telegram_text` | `text` (1-4096, Telegram HTML: `b i u s a code pre`), `disableLinkPreview?` | `{ chatId }` (numeric string or `@channel`) |
+| `twilio_sms`, `sendsms_mn` | `sms_text` | `text` (1-1600, plain text, no escaping) | `{ phoneNumber }`: Twilio E.164 (`"+97699112233"`); sendsms.mn 8 Mongolian digits (`"99112233"`, `+976` stripped) |
 | `generic_webhook` | `webhook_json` | `title` (1-200), `body` (1-4000), `data?` (string to string) | `{}` |
 
-- An `email_html` template works on both SES and SMTP. The `email_html` `content.source` field is
+- An `email_html` template works on both SES and SMTP, and an `sms_text` template works on both
+  Twilio and sendsms.mn. The `email_html` `content.source` field is
   optional (`"raw"`). The API rejects `"designed"` and `mailyJson`, because the visual designer is
   dashboard-only.
 - Email `cc`/`bcc`: max 50 each. `attachments`: max 20,
@@ -56,10 +58,17 @@ No API key needed: `GET /healthz`, `GET /openapi.json`, `GET /docs` (API referen
   about 10 MiB each and about 25 MiB total. This works on SES and SMTP.
 - Escaping of param values: `bodyHtml` and Telegram `text` are HTML-escaped. Slack escapes
   `& < >`. Discord backslash-escapes markdown. Email `subject` (no line breaks allowed), `bodyText`,
-  FCM and webhook fields are not escaped. `logTitle`/`logDescription` are never escaped, so render
+  FCM, SMS and webhook fields are not escaped. `logTitle`/`logDescription` are never escaped, so render
   them as text.
+- SMS length is checked **after rendering**, as a 400 from `/send` and test-send. Twilio: ≤1600
+  (billed per ~160 GSM-7 / ~70 UCS-2 segment). sendsms.mn sends exactly one SMS: ≤159 chars if
+  every character is GSM-7 (plain Latin), ≤69 if any is not (Cyrillic, emoji: UCS-2). Keep
+  Mongolian templates short and bound param lengths. A Twilio recipient without a country code is
+  a 400. Credentials (Twilio Account SID + Auth Token + sender number or Messaging Service SID;
+  sendsms.mn API key + token) are set in the dashboard only.
 - Only SES populates the suppression list (hard bounces and complaints via SNS). Suppressed rows
-  return 202 but are not sent or billed.
+  return 202 but are not sent or billed. There is no SMS suppression list (Twilio itself blocks numbers
+  that replied STOP).
 
 ## POST /send
 
@@ -178,5 +187,10 @@ Body: `{ "error": "<code>", "message": "<text>" }`. Branch on status + `error`.
 
 API rate limits apply per IP and per workspace. Burst and sustained rates by plan: Free 20/10 rps,
 Starter 120/60, Pro 240/120, Scale 600/300. One `/send` with 1000 targets is one request. Provider
-pacing (SES/SMTP 840/min default, Telegram 1500/min, Slack 1/s per webhook) queues the work and
-never rejects it.
+pacing (SES/SMTP 840/min default, Telegram 1500/min, Slack 1/s per webhook, Twilio and sendsms.mn
+300/min default) queues the work and never rejects it.
+
+Provider errors on delivery rows: `providerError.name` is e.g. `TwilioError` or `SendsmsMnError`.
+For SMS, provider 4xx except 429 is `failed_terminal` (bad number, country not enabled, STOP,
+wrong credentials, no sendsms.mn balance); 429 and 5xx are retried. sendsms.mn timeouts are not
+retried, because the SMS may already have been sent.

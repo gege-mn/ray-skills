@@ -16,6 +16,8 @@
     "transactional-email",
     "push",
     "fcm",
+    "sms",
+    "twilio",
     "slack",
     "discord",
     "telegram",

@@ -1,13 +1,14 @@
 ---
 name: ray-integration
-description: Integrates apps with the Ray notification API (ray.gege.mn), which sends transactional email (Amazon SES or SMTP), mobile push (FCM), Slack, Discord, Telegram and HTTPS webhook notifications through one REST API, a hosted MCP server and the @gege-mn/ray TypeScript SDK. Use when a project sends or should send notifications or transactional email through Ray, when adding or debugging send code, idempotent sends, fan-out or multi-channel sends, scheduled sends, in-app notification feeds, delivery status, click tracking or signed delivery webhooks, when creating or publishing Ray templates, or when migrating templates and send calls from Resend, SendGrid, Postmark, Mailgun, SES, Novu, Knock, Courier, OneSignal or Firebase into Ray. Also use when RAY_API_KEY, ray-api.gege.mn or @gege-mn/ray appears in a project. Not for the Ray distributed computing framework (ray.io, Ray Serve, Ray Tune).
+description: Integrates apps with the Ray notification API (ray.gege.mn), which sends transactional email (Amazon SES or SMTP), mobile push (FCM), SMS (Twilio or sendsms.mn), Slack, Discord, Telegram and HTTPS webhook notifications through one REST API, a hosted MCP server and the @gege-mn/ray TypeScript SDK. Use when a project sends or should send notifications or transactional email through Ray, when adding or debugging send code, idempotent sends, fan-out or multi-channel sends, scheduled sends, in-app notification feeds, delivery status, click tracking or signed delivery webhooks, when creating or publishing Ray templates, or when migrating templates and send calls from Resend, SendGrid, Postmark, Mailgun, SES, Twilio, Novu, Knock, Courier, OneSignal or Firebase into Ray. Also use when RAY_API_KEY, ray-api.gege.mn or @gege-mn/ray appears in a project. Not for the Ray distributed computing framework (ray.io, Ray Serve, Ray Tune).
 ---
 
 # Ray integration
 
 Ray (https://ray.gege.mn) is a multi-tenant notification delivery API. It is not the Ray
 distributed computing framework. Ray relays through the workspace's own provider credentials over
-7 channels: Amazon SES email, SMTP email, FCM push, Slack, Discord, Telegram and generic HTTPS webhook.
+9 channels: Amazon SES email, SMTP email, FCM push, Slack, Discord, Telegram, Twilio SMS, sendsms.mn SMS
+(Mongolian numbers) and generic HTTPS webhook.
 
 - REST base URL: `https://ray-api.gege.mn` (no `/v1`). Auth on every request:
   `Authorization: Bearer $RAY_API_KEY` (`ck_live_...`). Read the key from the environment. Never
@@ -87,9 +88,15 @@ Raw HTTP fallback: `POST https://ray-api.gege.mn/send` with headers `Authorizati
   personalization), `deliveries[]` (1-10 channels for one person, each with its own
   `channelConfigId`/content/`recipient`; a delivery's `params` *replaces* top-level `params`), or
   feed-only (`feed.title` + `externalUserId`, no channel).
-- **Ray keeps no recipient registry**: pass the email, FCM `deviceToken`/`topic` or Telegram
-  `chatId` on every send. `externalUserId` only labels rows and keys the feed. It never picks who
+- **Ray keeps no recipient registry**: pass the email, FCM `deviceToken`/`topic`, Telegram
+  `chatId` or SMS `phoneNumber` on every send. `externalUserId` only labels rows and keys the feed. It never picks who
   receives. Slack, Discord and webhook recipients are `{}`.
+- **SMS**: `twilio_sms` and `sendsms_mn` share the `sms_text` kind (`{ text }`, plain text, max
+  1600, params inserted verbatim). Twilio wants E.164 (`{ phoneNumber: "+97699112233" }`, no
+  country code is a 400); sendsms.mn wants 8 Mongolian digits (`"99112233"`, `+976` is stripped).
+  sendsms.mn sends one SMS: the *rendered* text must be ≤159 chars if all GSM-7 (plain Latin), or
+  ≤69 if it has any other character (Cyrillic, emoji), else 400 on `/send` and test-send. Keep
+  Mongolian SMS templates short and params bounded. Ray has no SMS suppression list.
 - **Bulk/marketing**: `priority: "low"` so transactional mail goes first. For isolated
   throughput, use a separate provider credential. For personalized campaigns, send one request per
   recipient with a shared `campaignId`.

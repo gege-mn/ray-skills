@@ -4,7 +4,7 @@ Agent skills and a Claude Code plugin for **[Ray](https://ray.gege.mn)**, the no
 API. (Ray the notification API is not related to the Ray distributed computing framework.)
 
 Ray sends transactional notifications over **email (Amazon SES or SMTP), mobile push (Firebase Cloud
-Messaging), Slack, Discord, Telegram and your own HTTPS webhook**. It uses one REST endpoint
+Messaging), SMS (Twilio or sendsms.mn), Slack, Discord, Telegram and your own HTTPS webhook**. It uses one REST endpoint
 (`POST /send`) and your own provider credentials, and handles templates, idempotency, fan-out,
 scheduling, retries, suppression, signed delivery webhooks, an in-app feed and click tracking.
 
@@ -16,7 +16,7 @@ email templates.
 
 | Path | What it is |
 |---|---|
-| `skills/ray-integration/` | Sending through Ray: MCP tools, the `@gege-mn/ray` SDK or raw HTTP. Covers idempotency, fan-out and multi-channel sends, feeds, delivery status, webhook verification, templates, and migrating templates and send calls from Resend, SendGrid, Postmark, Mailgun, SES, Novu, Knock, Courier, OneSignal. |
+| `skills/ray-integration/` | Sending through Ray: MCP tools, the `@gege-mn/ray` SDK or raw HTTP. Covers idempotency, fan-out and multi-channel sends, feeds, delivery status, webhook verification, templates, and migrating templates and send calls from Resend, SendGrid, Postmark, Mailgun, SES, Twilio, Novu, Knock, Courier, OneSignal. |
 | `skills/ray-email-design/` | Consistent, bulletproof HTML email templates: one frozen brand shell, local preview, real-inbox check, then save and publish to Ray. |
 | `.claude-plugin/marketplace.json` | Claude Code plugin marketplace `ray-skills` with one plugin, `ray`. |
 | `.claude-plugin/plugin.json` | The `ray` plugin: both skills. |
@@ -151,6 +151,7 @@ const { sendId } = await ray.send(
 
 - "Send a welcome email through Ray when a user signs up, with an idempotency key."
 - "Post deploy notifications to our Slack channel through Ray."
+- "Move our Twilio SMS login codes to Ray, and send Mongolian numbers through sendsms.mn."
 - "Add push notifications for shipped orders via Ray and FCM, and clean up dead device tokens."
 - "Migrate our SendGrid dynamic templates to Ray and replace the send calls."
 - "Move our Knock workflows to Ray: email, push and in-app feed."

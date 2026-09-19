@@ -102,18 +102,38 @@ Workflow products (Novu, Knock, Courier) bundle channels and orchestration. Map 
 | Chat step: Slack / Discord / Telegram | `slack_text` / `discord_text` / `telegram_text` template |
 | Webhook step | `webhook_json` template |
 | In-app / inbox step | No template kind. Use `feed` (or the template's `logTitle`/`logDescription` + `showInFeed`) with `externalUserId`, read via `GET /notifications` |
-| SMS / WhatsApp step | **No Ray channel.** Report it as unsupported and leave it on the old provider |
+| SMS step | `sms_text` template: `{ text }` (plain text, max 1600). Sent via a `twilio_sms` or `sendsms_mn` channel (see below) |
+| WhatsApp step | **No Ray channel.** Report it as unsupported and leave it on the old provider |
 | Multi-channel workflow | One `/send` with `deliveries[]` (up to 10 channels) for one user |
 | Delay step | `notBefore` (can't be cancelled; for cancellable reminders, schedule in the app) |
 | Digest / batch | Aggregate in the app, then send once using a `{{#items}}` section |
 | Subscribers, device tokens, preferences, topics | Ray has **no registry**. Keep contacts, tokens and opt-outs in the app DB and pass `recipient` each send. FCM topics work as `{ topic }` |
+
+### SMS (Twilio, Vonage, Plivo, MessageBird, workflow SMS steps)
+
+- One `sms_text` template works on both `twilio_sms` and `sendsms_mn`. Content is `{ text }`,
+  plain text, 1-1600 chars. Params are inserted verbatim (no markup, nothing escaped). Convert
+  variables to Ray Mustache as for email; there is no `subject`, but `logTitle`/`logDescription`
+  are still required.
+- Twilio `client.messages.create({ from, to, body })` becomes a send with `recipient:
+  { phoneNumber: to }` (E.164, e.g. `"+97699112233"`; no country code is a 400) and the body as
+  inline `content: { text }` or a template. `from` / `messagingServiceSid` live on the channel
+  config (dashboard), not the send. Twilio credentials (Account SID, Auth Token) are entered in the
+  dashboard, never through the API.
+- sendsms.mn recipients are 8 Mongolian digits (`"99112233"`; `+976` is stripped). It sends one SMS:
+  the **rendered** text must be ≤159 chars if all GSM-7 (plain Latin), ≤69 if it contains any
+  Cyrillic or other non-GSM character, otherwise `/send` and test-send return 400. When moving
+  long Mongolian messages, shorten them, bound param lengths, or keep a separate shorter template
+  for that channel. Flag any source message that can't fit.
+- Ray has no SMS suppression list or opt-out registry. Keep STOP/opt-out state in the app (Twilio
+  still blocks numbers that replied STOP on its side).
 
 ## Replacing send calls
 
 - **From address and sender identity** live on the channel config (`fromAddress`, `fromName`).
   There's no per-send `from`, `replyTo` or custom headers. Different senders need different
   channel configs (dashboard).
-- **Recipients**: `to: "a@b.com"` becomes `recipient: { email }`. `cc`/`bcc`/attachments go inside
+- **Recipients**: `to: "a@b.com"` becomes `recipient: { email }` (SMS: `recipient: { phoneNumber }`). `cc`/`bcc`/attachments go inside
   `recipient`. Several independent `to` addresses become `targets[]` (identical body) or one send
   each (personalized).
 - **Idempotency**: add an `Idempotency-Key` (SDK `{ idempotencyKey }`) derived from the event on
