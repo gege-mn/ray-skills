@@ -128,3 +128,8 @@ Sample send:
 Ray stores no recipient registry. Callers pass `recipient` and `params` on every send. If you
 enable `trackClicks` on sends, add `data-ray-no-track` to the unsubscribe and legal links in the
 shell.
+
+Sender and headers are per send, not part of the template. The channel config's from address is
+the default, and `recipient.from: { email?, name? }` overrides it (same domain as the config's from
+address only). Use `recipient.replyTo: [{ email }]` for replies. For bulk or marketing mail, also send the unsubscribe link as a header:
+`recipient.headers: { "List-Unsubscribe": "<https://...>" }`.

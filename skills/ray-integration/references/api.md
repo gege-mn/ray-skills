@@ -41,7 +41,7 @@ No API key needed: `GET /healthz`, `GET /openapi.json`, `GET /docs` (API referen
 
 | Channel `kind` | Template `channelKind` | `content` | `recipient` |
 |---|---|---|---|
-| `ses_email`, `smtp_email` | `email_html` | `subject` (1-998), `bodyHtml`, `bodyText` | `{ email, name?, cc?, bcc?, attachments? }` |
+| `ses_email`, `smtp_email` | `email_html` | `subject` (1-998), `bodyHtml`, `bodyText` | `{ email, name?, cc?, bcc?, from?, replyTo?, headers?, attachments? }` |
 | `fcm_push` | `fcm_basic` | `title` (1-200), `body` (1-2000), `imageUrl?`, `data?` (string to string) | `{ deviceToken }` **or** `{ topic }` |
 | `slack_webhook` | `slack_text` | `text` (1-40000, mrkdwn) | `{}` |
 | `discord_webhook` | `discord_text` | `content` (1-2000, Discord markdown; mentions disabled) | `{}` |
@@ -56,6 +56,16 @@ No API key needed: `GET /healthz`, `GET /openapi.json`, `GET /docs` (API referen
 - Email `cc`/`bcc`: max 50 each. `attachments`: max 20,
   `{ filename, content (base64), contentType?, disposition?: "attachment"|"inline", contentId? }`,
   about 10 MiB each and about 25 MiB total. This works on SES and SMTP.
+- Email `from`: `{ email?, name? }` overrides the config's `fromAddress`/`fromName` for one send;
+  each omitted field keeps the config's value. The address must be on the config `fromAddress`'s
+  domain, exactly (a subdomain or another domain is a `400`), and one the provider allows
+  (a verified SES identity; SMTP also uses it as the envelope sender). Another domain needs its own
+  channel config. `replyTo`: `[{ email, name? }]`,
+  1-10. `headers`: `{ "Name": "value" }`, max 15, printable ASCII (value 1-995), Ray-managed
+  headers (`From`, `Sender`, `Reply-To`, `To`, `Cc`, `Bcc`, `Subject`, `Date`, `Message-ID`,
+  `Return-Path`, `MIME-Version`, `Content-Type`, `Content-Disposition`, `Content-Transfer-Encoding`)
+  and provider controls (`X-SES-*`, `X-SMTPAPI`, `X-MC-*`, `X-MSYS-*`, `X-PM-*`, `X-Mailgun-*`,
+  `X-MJ-*`, `X-Mailjet-*`, `X-Mailin-*`) are a `400`. Works on SES and SMTP.
 - Escaping of param values: `bodyHtml` and Telegram `text` are HTML-escaped. Slack escapes
   `& < >`. Discord backslash-escapes markdown. Email `subject` (no line breaks allowed), `bodyText`,
   FCM, SMS and webhook fields are not escaped. `logTitle`/`logDescription` are never escaped, so render

@@ -130,9 +130,12 @@ Workflow products (Novu, Knock, Courier) bundle channels and orchestration. Map 
 
 ## Replacing send calls
 
-- **From address and sender identity** live on the channel config (`fromAddress`, `fromName`).
-  There's no per-send `from`, `replyTo` or custom headers. Different senders need different
-  channel configs (dashboard).
+- **From address and sender identity**: the channel config's `fromAddress`/`fromName` is the
+  default. A per-send `from` becomes `recipient.from: { email?, name? }` (omitted fields keep the
+  config's value), `reply_to`/`replyTo` becomes `recipient.replyTo: [{ email, name? }]`, and custom
+  headers (`List-Unsubscribe`, `X-*`) become `recipient.headers: { "Name": "value" }`. The from
+  address must be on the same domain as the channel config's `fromAddress` (a `400` otherwise), so
+  senders on different domains need different channel configs.
 - **Recipients**: `to: "a@b.com"` becomes `recipient: { email }` (SMS: `recipient: { phoneNumber }`). `cc`/`bcc`/attachments go inside
   `recipient`. Several independent `to` addresses become `targets[]` (identical body) or one send
   each (personalized).
@@ -151,9 +154,10 @@ await resend.emails.send({ from: "Acme <no-reply@acme.com>", to: user.email, sub
 // after
 await ray.send(
   {
-    channelConfigId: process.env.RAY_EMAIL_CHANNEL_ID!, // from address configured on this channel
+    channelConfigId: process.env.RAY_EMAIL_CHANNEL_ID!, // "Acme <no-reply@acme.com>" is this channel's default from
     templateId: process.env.RAY_WELCOME_TEMPLATE_ID!,
     params: { name: user.name },
+    // add `from: { email, name }` inside `recipient` only when this send needs a different sender
     recipient: { email: user.email, name: user.name },
     externalUserId: user.id,
   },
